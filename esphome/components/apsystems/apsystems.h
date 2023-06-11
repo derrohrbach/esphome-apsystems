@@ -5,31 +5,39 @@
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
 #include "esphome/components/uart/uart.h"
+#include "esphome/components/time/real_time_clock.h"
 #include "zigbee_coordinator.h"
 #include "inverter.h"
 
 namespace esphome {
 namespace apsystems {
 
-class Apsystems : public Component, public uart::UARTDevice {
+class Apsystems : public PollingComponent, public uart::UARTDevice {
  public:
   float get_setup_priority() const override;
 
   void setup() override;
   void dump_config() override;
+  void set_time(time::RealTimeClock *time) { time_ = time; }
   void add_inverter(Inverter *inverter);
   void pair_inverter(std::string serial);
   void poll_inverter(std::string serial);
   void reboot_inverter(std::string serial);
   void set_reset_pin(GPIOPin *pin);
   void set_restore(bool restore);
+  void set_auto_pair(bool auto_pair);
+  void update();
+  void loop();
 
  protected:
   void run_coordinator();
+  time::RealTimeClock *time_;
   ZigbeeCoordinator coordinator_;
   std::vector<Inverter*> inverters_{};
   GPIOPin *reset_pin_;
-  bool restore_{false};
+  bool auto_pair_ = false;
+  bool restore_ = false;
+  uint16_t last_day_of_year_ = 0;
 };
 
 template<typename... Ts> class ApsystemsPairInverterAction : public Action<Ts...> {

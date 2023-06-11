@@ -61,6 +61,7 @@ class ZigbeeCoordinator {
   Inverter *pairing_inverter_ = nullptr;
   Inverter *polling_inverter_ = nullptr;
   Inverter *rebooting_inverter_ = nullptr;
+  int healthcheck_idle_counter_ = 0;
   int state_tries_ = 0;
   int data_state_tries_ = 0;
   int delay_to_next_execution_ = 0;

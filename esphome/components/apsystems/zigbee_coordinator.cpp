@@ -159,8 +159,10 @@ void ZigbeeCoordinator::run() {
       }
       break;
     case ZigbeeCoordinatorState::CS_IDLE:
-      // Check connection every 30 seconds
-      if (state_tries_ * get_delay_to_next_execution() > 30000) {
+      // Check connection about every 30 seconds
+      healthcheck_idle_counter_++;
+      if (healthcheck_idle_counter_ > 30) {
+        healthcheck_idle_counter_ = 0;
         set_state(ZigbeeCoordinatorState::CS_CHECK_1);
       } else if (pairing_inverter_ != nullptr) {
         restart(true);
@@ -852,13 +854,13 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
   char s_d[CC2530_MAX_MSG_SIZE * 2];
   strncpy(s_d, tail + 30, strlen(tail));
 
-  if (inv->get_type() == InverterType::IT_DS3) {
+  if (inv->get_type() == InverterType::INVERTER_TYPE_DS3) {
     ESP_LOGD(TAG, "decoding DS3 inverter");
     // ACV offset 34
     new_data.ac_voltage = extractValue(68, 4, 1, 0, s_d) / 3.8;
 
     // FREQ offset 36
-    new_data.frequency = extractValue(72, 4, 1, 0, s_d) / 100;
+    new_data.ac_frequency = extractValue(72, 4, 1, 0, s_d) / 100;
 
     // TEMP offset 48
     new_data.temperature = extractValue(96, 4, 1, 0, s_d) * 0.0198 - 23.84;
@@ -875,9 +877,9 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
     new_data.dc_current[1] = extractValue(64, 4, 1, 0, s_d) * 0.0125f;
 
   } else {
-    if (inv->get_type() == InverterType::IT_YC600) {
+    if (inv->get_type() == InverterType::INVERTER_TYPE_YC600) {
       ESP_LOGD(TAG, "decoding YC600 inverter");
-    } else if (inv->get_type() == InverterType::IT_QS1) {
+    } else if (inv->get_type() == InverterType::INVERTER_TYPE_QS1) {
       ESP_LOGD(TAG, "decoding QS1 inverter");
     } else {
       ESP_LOGD(TAG, "decoding unspecified inverter (trying like QS1)");
@@ -888,7 +890,7 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
     //  ACV offset 28
     new_data.ac_voltage = extractValue(56, 4, 1, 0, s_d) / 5.3108f;
     // FREQ offset 12
-    new_data.frequency = 50000000 / extractValue(24, 6, 1, 0, s_d);
+    new_data.ac_frequency = 50000000 / extractValue(24, 6, 1, 0, s_d);
     // TEMP offset 10
     new_data.temperature = extractValue(20, 4, 0.2752f, -258.7f, s_d);
 
@@ -907,7 +909,7 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
     //********************************************************************************************
     //                                     QS1
     //********************************************************************************************
-    if (inv->get_type() == InverterType::IT_QS1) {
+    if (inv->get_type() == InverterType::INVERTER_TYPE_QS1) {
       ESP_LOGD(TAG, "extracting dc values for panels 3 and 4");
 
       // ******************  dc voltage   *****************************************
@@ -939,13 +941,13 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
   // at the start of this we have a value of the t_new[which] of the former poll
   // if this is 0 there was no former poll
   switch (inv->get_type()) {
-    case InverterType::IT_YC600:                                 // yc600
+    case InverterType::INVERTER_TYPE_YC600:                                 // yc600
       new_data.poll_timestamp = extractValue(34, 4, 1, 0, s_d);  // dataframe timestamp
       break;
-    case InverterType::IT_QS1:                                   // qs1
+    case InverterType::INVERTER_TYPE_QS1:                                   // qs1
       new_data.poll_timestamp = extractValue(60, 4, 1, 0, s_d);  // dataframe timestamp
       break;
-    case InverterType::IT_DS3:                                   // ds3 offset 38
+    case InverterType::INVERTER_TYPE_DS3:                                   // ds3 offset 38
       new_data.poll_timestamp = extractValue(76, 4, 1, 0, s_d);  // dataframe timestamp ds3
       break;
   }
@@ -962,7 +964,7 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
   int increment = 10;  // offset to the next energy value
   int btc = 6;         // amount of bytes
   int offst = 74;      // this is incremented with 10
-  if (inv->get_type() == InverterType::IT_DS3) {
+  if (inv->get_type() == InverterType::INVERTER_TYPE_DS3) {
     // for the DS3 we have different offset/increment
     offst = 100;
     increment = 8;
@@ -980,7 +982,7 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
           extractValue(offst + x * increment, btc, 1, 0, s_d);  // offset 74 todays module energy channel 0
 
       // we calculate a new energy value for this panel and remember it
-      if (inv->get_type() == InverterType::IT_DS3) {
+      if (inv->get_type() == InverterType::INVERTER_TYPE_DS3) {
         new_data.energy_since_last_reset[x] = extracted_energy_value / 100000.0f * 1.66f;  //[Wh]
       } else {
         new_data.energy_since_last_reset[x] = extracted_energy_value * 8.311F / 3600.0f;   //[Wh]
@@ -996,10 +998,10 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
 
       // calculate the power for this panel
       new_data.dc_power[x] = new_data.dc_voltage[x] * new_data.dc_current[x];
-      new_data.power[x] = energy_increase / (time_since_last_poll / 3600.0f);  //[W]
+      new_data.ac_power[x] = energy_increase / (time_since_last_poll / 3600.0f);  //[W]
 
       new_data.dc_power[4] += new_data.dc_power[x];
-      new_data.power[4] += new_data.power[x];
+      new_data.ac_power[4] += new_data.ac_power[x];
       new_data.energy_since_last_reset[4] += new_data.energy_since_last_reset[x];
       new_data.energy_today[4] += new_data.energy_today[x];
     }
@@ -1015,7 +1017,7 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
   ESP_LOGI(TAG, "            temperature = %.2f", new_data.temperature);
   ESP_LOGI(TAG, "         signal_quality = %.2f", new_data.signal_quality);
   ESP_LOGI(TAG, "             ac_voltage = %.2f", new_data.ac_voltage);
-  ESP_LOGI(TAG, "              frequency = %.2f", new_data.frequency);
+  ESP_LOGI(TAG, "              frequency = %.2f", new_data.ac_frequency);
   ESP_LOGI(TAG, "             dc_voltage = %5.2f %5.2f %5.2f %5.2f", new_data.dc_voltage[0], new_data.dc_voltage[1],
            new_data.dc_voltage[2], new_data.dc_voltage[3]);
   ESP_LOGI(TAG, "             dc_current = %5.2f %5.2f %5.2f %5.2f", new_data.dc_current[0], new_data.dc_current[1],
@@ -1025,8 +1027,8 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
   ESP_LOGI(TAG, "energy_since_last_reset = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.energy_since_last_reset[0],
            new_data.energy_since_last_reset[1], new_data.energy_since_last_reset[2],
            new_data.energy_since_last_reset[3], new_data.energy_since_last_reset[4]);
-  ESP_LOGI(TAG, "                  power = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.power[0], new_data.power[1],
-           new_data.power[2], new_data.power[3], new_data.power[4]);
+  ESP_LOGI(TAG, "                  power = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.ac_power[0], new_data.ac_power[1],
+           new_data.ac_power[2], new_data.ac_power[3], new_data.ac_power[4]);
   ESP_LOGI(TAG, "           energy_today = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.energy_today[0],
            new_data.energy_today[1], new_data.energy_today[2], new_data.energy_today[3], new_data.energy_today[4]);
 
