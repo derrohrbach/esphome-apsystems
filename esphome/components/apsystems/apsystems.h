@@ -20,6 +20,7 @@ class Apsystems : public Component, public uart::UARTDevice {
   void add_inverter(Inverter *inverter);
   void pair_inverter(std::string serial);
   void poll_inverter(std::string serial);
+  void reboot_inverter(std::string serial);
   void set_reset_pin(GPIOPin *pin);
   void set_restore(bool restore);
 
@@ -50,6 +51,19 @@ template<typename... Ts> class ApsystemsPollInverterAction : public Action<Ts...
   TEMPLATABLE_VALUE(std::string, serial)
 
   void play(Ts... x) override { this->apsystems_->poll_inverter(serial_.value(x...)); }
+
+ protected:
+  Apsystems *apsystems_;
+};
+
+
+template<typename... Ts> class ApsystemsRebootInverterAction : public Action<Ts...> {
+ public:
+  ApsystemsRebootInverterAction(Apsystems *aps) : apsystems_(aps) {}
+
+  TEMPLATABLE_VALUE(std::string, serial)
+
+  void play(Ts... x) override { this->apsystems_->reboot_inverter(serial_.value(x...)); }
 
  protected:
   Apsystems *apsystems_;

@@ -24,6 +24,9 @@ ApsystemsPairInverterAction = apsystems_ns.class_(
 ApsystemsPollInverterAction = apsystems_ns.class_(
     "ApsystemsPollInverterAction", automation.Action
 )
+ApsystemsRebootInverterAction = apsystems_ns.class_(
+    "ApsystemsRebootInverterAction", automation.Action
+)
 MULTI_CONF = True
 
 
@@ -91,6 +94,9 @@ INVERTER_ACTION_SCHEMA = cv.Schema(
 )
 @automation.register_action(
     "apsystems.poll_inverter", ApsystemsPollInverterAction, INVERTER_ACTION_SCHEMA
+)
+@automation.register_action(
+    "apsystems.reboot_inverter", ApsystemsRebootInverterAction, INVERTER_ACTION_SCHEMA
 )
 async def actions_to_code(config, action_id, template_arg, args):
     paren = await cg.get_variable(config[CONF_ID])

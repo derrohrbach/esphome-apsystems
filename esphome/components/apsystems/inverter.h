@@ -24,6 +24,7 @@ struct InverterData {
   float ac_voltage{0.0f};
   float dc_current[4]{0.0f};
   float dc_voltage[4]{0.0f};
+  float dc_power[5]{0.0f};
   float power[5]{0.0f};
   float energy_since_last_reset[5]{0.0f};
   float energy_today[5]{0.0f};
@@ -50,9 +51,9 @@ class Inverter {
   ESPPreferenceObject pref_;
   char serial_[13] = "000000000000";
   char id_[5] = {0};
-  InverterData data_;
+  InverterData data_{};
   InverterType type_ = InverterType::IT_YC600;
-  bool connnected_panels_[4] = {true, true, true, true};
+  bool connnected_panels_[4] = {true, true, false, false};
 };
 
 }  // namespace apsystems

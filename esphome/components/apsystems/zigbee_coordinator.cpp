@@ -80,7 +80,12 @@ void ZigbeeCoordinator::set_state(ZigbeeCoordinatorState state) {
       set_delay_to_next_execution(500);  // wait for start of normal operation
       break;
     case ZigbeeCoordinatorState::CS_PAIR_INVERTER:
-      set_delay_to_next_execution(1500);  // wait for start of normal operation
+    case ZigbeeCoordinatorState::CS_POLL_INVERTER:
+    case ZigbeeCoordinatorState::CS_IDLE:
+      set_delay_to_next_execution(100);  // Can continue quickly
+      break;
+    case ZigbeeCoordinatorState::CS_REBOOT_INVERTER:
+      set_delay_to_next_execution(2000);  // Wait for reboot until we read the response
       break;
   }
   if (state == ZigbeeCoordinatorState::CS_IDLE)
@@ -159,6 +164,8 @@ void ZigbeeCoordinator::run() {
         set_state(ZigbeeCoordinatorState::CS_CHECK_1);
       } else if (pairing_inverter_ != nullptr) {
         restart(true);
+      } else if (rebooting_inverter_ != nullptr) {
+        set_state(ZigbeeCoordinatorState::CS_REBOOT_INVERTER);
       } else if (polling_inverter_ != nullptr) {
         set_state(ZigbeeCoordinatorState::CS_POLL_INVERTER);
       }
@@ -213,6 +220,12 @@ void ZigbeeCoordinator::run() {
         } else {
           set_state(ZigbeeCoordinatorState::CS_IDLE);
         }
+      }
+      break;
+    case ZigbeeCoordinatorState::CS_REBOOT_INVERTER:
+      if (cmdResult = zb_reboot_inverter(rebooting_inverter_)) {
+        rebooting_inverter_ = nullptr;
+        set_state(ZigbeeCoordinatorState::CS_IDLE);
       }
       break;
   }
@@ -516,12 +529,12 @@ void ZigbeeCoordinator::zb_send(char printString[]) {
 
   // else if (diagNose == 2) ws.textAll("sendZB FE" + String(bufferSend));
 }
-/*
+
 // ******************************************************************************
 //                   reboot an inverter
 // *******************************************************************************
-AsyncBoolResult ZigbeeCoordinator::reboot_inverter(Inverter *inverter) {
-  if (data_state_ == DataReadState::DS_IDLE) {
+AsyncBoolResult ZigbeeCoordinator::zb_reboot_inverter(Inverter *inverter) {
+  if (data_state_ == DataReadState::DS_IDLE && state_tries_ == 0) {
     char rebootCmd[57];
 
     char command[][50] = {
@@ -533,7 +546,7 @@ AsyncBoolResult ZigbeeCoordinator::reboot_inverter(Inverter *inverter) {
 
     // construct the command
     strncpy(rebootCmd, command[0], sizeof(command[0]));
-    strncat(rebootCmd, inverter->id, 4);  // add inv_id
+    strncat(rebootCmd, inverter->get_id(), 4);  // add inv_id
     strncat(rebootCmd, command[1], sizeof(command[1]));
     strncat(rebootCmd, ecu_id_reverse_, sizeof(ecu_id_reverse_));
     strncat(rebootCmd, command[2], sizeof(command[2]));
@@ -551,15 +564,15 @@ AsyncBoolResult ZigbeeCoordinator::reboot_inverter(Inverter *inverter) {
     // put in the CRC at the end of the command in sendZigbee
 
     zb_send(rebootCmd);
-
-    delay_int(2000);
+    return AsyncBoolResult::AB_INCOMPLETE;  // WAIT A BIT
   }
   int bytesRead = 0;
   char s_d[CC2530_MAX_MSG_SIZE * 2] = {0};
   if (!zb_read(s_d, bytesRead))
     return AsyncBoolResult::AB_INCOMPLETE;
+  return AsyncBoolResult::AB_SUCCESS;
 }
-*/
+
 bool ZigbeeCoordinator::start_pair_inverter(const char *serial) {
   for (auto inv : inverters_) {
     if (serial[0] == '*') {
@@ -704,6 +717,26 @@ bool ZigbeeCoordinator::zb_check_pair_response(const char *msg, int bytes_read, 
   return true;
 }
 
+bool ZigbeeCoordinator::start_reboot_inverter(const char *serial) {
+  for (auto inv : inverters_) {
+    if (strcmp(serial, inv->get_serial()) == 0 && inv->is_paired()) {
+      rebooting_inverter_ = inv;
+      break;
+    }
+  }
+
+  if (rebooting_inverter_ == nullptr) {
+    ESP_LOGE(TAG, "rebooting failed: inverter with serial %s is not paired", serial);
+  } else if (state_ != ZigbeeCoordinatorState::CS_IDLE) {
+    ESP_LOGI(TAG, "rebooting defered: coordinator busy or not configured", serial);
+  } else {
+    ESP_LOGI(TAG, "rebooting inverter %s", rebooting_inverter_->get_serial());
+    set_state(ZigbeeCoordinatorState::CS_REBOOT_INVERTER);
+    return true;
+  }
+  return false;
+}
+
 bool ZigbeeCoordinator::start_poll_inverter(const char *serial) {
   for (auto inv : inverters_) {
     if (serial[0] == '*') {
@@ -756,6 +789,16 @@ AsyncBoolResult ZigbeeCoordinator::zb_poll(Inverter *inverter) {
   return AsyncBoolResult::AB_FAIL;
 }
 
+// *******************************************************************************************************************
+//                             extract values
+// *******************************************************************************************************************
+float extractValue(uint8_t startPosition, uint8_t valueLength, float valueSlope, float valueOffset,
+                   const char *toDecode) {
+  char tempMsgBuffer[64] = {0};  // was 254
+  strncpy(tempMsgBuffer, toDecode + startPosition, valueLength);
+  return (valueSlope * (float) strtol(tempMsgBuffer, 0, 16)) + valueOffset;
+}
+
 // ******************************************************************
 //                    decode polling answer
 // ******************************************************************
@@ -763,7 +806,7 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
   uint8_t message_start_offset = 0;
 
   InverterData old_data = inv->get_data();
-  InverterData new_data;
+  InverterData new_data{};
 
   if (bytes_read == 0) {
     ESP_LOGD(TAG, "no answer on poll request");
@@ -805,7 +848,6 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
   //  in tail at offset 14, 2 bytes with signalQuality reside
 
   new_data.signal_quality = extractValue(14, 2, 1, 0, tail) * 100 / 255;
-  ESP_LOGD(TAG, "extracted sigQ = %.2f", new_data.signal_quality);
 
   char s_d[CC2530_MAX_MSG_SIZE * 2];
   strncpy(s_d, tail + 30, strlen(tail));
@@ -916,8 +958,6 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
 
   int time_since_last_poll = new_data.poll_timestamp - old_data.poll_timestamp;
 
-  ESP_LOGD(TAG, "extracted time = %i  the timespan = %i", new_data.poll_timestamp, time_since_last_poll);
-
   // now for each channel
   int increment = 10;  // offset to the next energy value
   int btc = 6;         // amount of bytes
@@ -928,10 +968,6 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
     increment = 8;
     btc = 8;
   }
-
-  float power_total = 0;
-  float energy_since_last_reset_total = 0;
-  float energy_today_total = 0;
   // for every panel of inverter which we go through this loop
 
   for (int x = 0; x < 4; x++) {
@@ -958,36 +994,43 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
       new_data.energy_today[x] =
           old_data.energy_today[x] + energy_increase;  // totalize the energy increase for this poll
 
-      // calculate the power for this panel and remember
-      new_data.power[x] = energy_increase / (time_since_last_poll * 3600.0f);  //[W]
-      // delay(100);
-      
-      power_total += new_data.power[x];
-      energy_since_last_reset_total += new_data.energy_since_last_reset[x];
-      energy_today_total += new_data.energy_today[x];
+      // calculate the power for this panel
+      new_data.dc_power[x] = new_data.dc_voltage[x] * new_data.dc_current[x];
+      new_data.power[x] = energy_increase / (time_since_last_poll / 3600.0f);  //[W]
+
+      new_data.dc_power[4] += new_data.dc_power[x];
+      new_data.power[4] += new_data.power[x];
+      new_data.energy_since_last_reset[4] += new_data.energy_since_last_reset[x];
+      new_data.energy_today[4] += new_data.energy_today[x];
     }
-  }
-  // now we extracted all values per panel and added the increased energy
-  // we have invData[which].power[x] and invData[which].en_total
-  new_data.energy_today[4] = energy_today_total;
-  new_data.power[4] = power_total;
-  new_data.energy_since_last_reset[4] = energy_since_last_reset_total;           // stack the increase
-  
+  }  // stack the increase
+
   inv->set_data(new_data);
 
   ESP_LOGD(TAG, "done parsing poll response");
+  yield();
+  ESP_LOGI(TAG, "inverter data: %s", inv->get_serial());
+  ESP_LOGI(TAG, "                   time = %i", new_data.poll_timestamp);
+  ESP_LOGI(TAG, "               timespan = %i", time_since_last_poll);
+  ESP_LOGI(TAG, "            temperature = %.2f", new_data.temperature);
+  ESP_LOGI(TAG, "         signal_quality = %.2f", new_data.signal_quality);
+  ESP_LOGI(TAG, "             ac_voltage = %.2f", new_data.ac_voltage);
+  ESP_LOGI(TAG, "              frequency = %.2f", new_data.frequency);
+  ESP_LOGI(TAG, "             dc_voltage = %5.2f %5.2f %5.2f %5.2f", new_data.dc_voltage[0], new_data.dc_voltage[1],
+           new_data.dc_voltage[2], new_data.dc_voltage[3]);
+  ESP_LOGI(TAG, "             dc_current = %5.2f %5.2f %5.2f %5.2f", new_data.dc_current[0], new_data.dc_current[1],
+           new_data.dc_current[2], new_data.dc_current[3]);
+  ESP_LOGI(TAG, "               dc_power = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.dc_power[0],
+           new_data.dc_power[1], new_data.dc_power[2], new_data.dc_power[3], new_data.dc_power[4]);
+  ESP_LOGI(TAG, "energy_since_last_reset = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.energy_since_last_reset[0],
+           new_data.energy_since_last_reset[1], new_data.energy_since_last_reset[2],
+           new_data.energy_since_last_reset[3], new_data.energy_since_last_reset[4]);
+  ESP_LOGI(TAG, "                  power = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.power[0], new_data.power[1],
+           new_data.power[2], new_data.power[3], new_data.power[4]);
+  ESP_LOGI(TAG, "           energy_today = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.energy_today[0],
+           new_data.energy_today[1], new_data.energy_today[2], new_data.energy_today[3], new_data.energy_today[4]);
+
   return 0;
 }
-
-// *******************************************************************************************************************
-//                             extract values
-// *******************************************************************************************************************
-float extractValue(uint8_t startPosition, uint8_t valueLength, float valueSlope, float valueOffset,
-                   const char *toDecode) {
-  char tempMsgBuffer[64] = {0};  // was 254
-  strncpy(tempMsgBuffer, toDecode + startPosition, valueLength);
-  return (valueSlope * (float) strtol(tempMsgBuffer, 0, 16)) + valueOffset;
-}
-
 }  // namespace apsystems
 }  // namespace esphome

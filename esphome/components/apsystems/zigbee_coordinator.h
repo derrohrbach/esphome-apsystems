@@ -19,7 +19,8 @@ enum ZigbeeCoordinatorState {
   CS_ENTER_NORMAL_OPERATION = 12,
   CS_IDLE = 20,
   CS_POLL_INVERTER = 21,
-  CS_PAIR_INVERTER = 22
+  CS_PAIR_INVERTER = 22,
+  CS_REBOOT_INVERTER = 23
 };
 
 enum DataReadState { DS_IDLE = 0, DS_WAITING = 1, DS_READING = 2 };
@@ -35,10 +36,11 @@ class ZigbeeCoordinator {
   void run();
   bool start_pair_inverter(const char *serial);
   bool start_poll_inverter(const char *serial);
+  bool start_reboot_inverter(const char *serial);
   int get_delay_to_next_execution();
 
  protected:
-  AsyncBoolResult reboot_inverter(Inverter *inverter);
+  AsyncBoolResult zb_reboot_inverter(Inverter *inverter);
   AsyncBoolResult zb_check();
   AsyncBoolResult zb_ping();
   AsyncBoolResult zb_poll(Inverter *inverter);
@@ -58,6 +60,7 @@ class ZigbeeCoordinator {
   bool poll_all_mode_ = false;
   Inverter *pairing_inverter_ = nullptr;
   Inverter *polling_inverter_ = nullptr;
+  Inverter *rebooting_inverter_ = nullptr;
   int state_tries_ = 0;
   int data_state_tries_ = 0;
   int delay_to_next_execution_ = 0;

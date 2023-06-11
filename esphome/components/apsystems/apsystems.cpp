@@ -34,6 +34,9 @@ void Apsystems::pair_inverter(std::string serial) {
 void Apsystems::poll_inverter(std::string serial) {
   coordinator_.start_poll_inverter(serial.c_str());
 }
+void Apsystems::reboot_inverter(std::string serial) {
+  coordinator_.start_reboot_inverter(serial.c_str());
+}
 void Apsystems::set_restore(bool restore) {
   restore_ = restore;
 }
