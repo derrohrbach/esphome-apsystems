@@ -21,7 +21,7 @@ void Apsystems::setup() {
       needs_pairing = true;
     coordinator_.add_inverter(inv);
   }
-  coordinator_.restart(false);
+  coordinator_.restart(ecu_id_, false);
   if (auto_pair_ && needs_pairing)
     coordinator_.start_pair_inverter("*");
   run_coordinator();
@@ -60,7 +60,7 @@ void Apsystems::poll_inverter(std::string serial) { coordinator_.start_poll_inve
 void Apsystems::reboot_inverter(std::string serial) { coordinator_.start_reboot_inverter(serial.c_str()); }
 void Apsystems::set_restore(bool restore) { restore_ = restore; }
 void Apsystems::set_auto_pair(bool auto_pair) { auto_pair_ = auto_pair; }
-
+void Apsystems::set_ecu_id(std::string ecu_id) { ecu_id.copy(ecu_id_, 12, 0); }
 void Apsystems::add_inverter(Inverter *inverter) { this->inverters_.push_back(inverter); }
 void Apsystems::set_reset_pin(GPIOPin *pin) { reset_pin_ = pin; }
 void Apsystems::dump_config() {

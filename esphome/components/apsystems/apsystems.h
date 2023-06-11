@@ -25,6 +25,7 @@ class Apsystems : public PollingComponent, public uart::UARTDevice {
   void reboot_inverter(std::string serial);
   void set_reset_pin(GPIOPin *pin);
   void set_restore(bool restore);
+  void set_ecu_id(std::string ecu_id);
   void set_auto_pair(bool auto_pair);
   void update();
   void loop();
@@ -37,6 +38,7 @@ class Apsystems : public PollingComponent, public uart::UARTDevice {
   GPIOPin *reset_pin_;
   bool auto_pair_ = false;
   bool restore_ = false;
+  char ecu_id_[13] = "\0";
   uint16_t last_day_of_year_ = 0;
 };
 

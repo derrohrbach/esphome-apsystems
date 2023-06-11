@@ -52,8 +52,9 @@ void ZigbeeCoordinator::set_uart_device(uart::UARTDevice *uart) { uart_ = uart; 
 void ZigbeeCoordinator::set_delay_to_next_execution(int delay_ms) { delay_to_next_execution_ = delay_ms; }
 int ZigbeeCoordinator::get_delay_to_next_execution() { return delay_to_next_execution_; }
 
-void ZigbeeCoordinator::restart(bool hard) {
-  ECU_REVERSE(ecu_id_).copy(ecu_id_reverse_, 12, 0);
+void ZigbeeCoordinator::restart(std::string ecu_id, bool hard) {
+  ecu_id.copy(ecu_id_, 12, 0);
+  ECU_REVERSE(ecu_id).copy(ecu_id_reverse_, 12, 0);
   reset_pin_->digital_write(true);
   if (hard)
     set_state(ZigbeeCoordinatorState::CS_HARD_RESET_COORDINATOR);
@@ -97,9 +98,11 @@ void ZigbeeCoordinator::set_state(ZigbeeCoordinatorState state) {
 }
 
 void ZigbeeCoordinator::run() {
+  if(ecu_id_[0] == '\0') //Not initialized yet
+    return;
   ZigbeeCoordinatorState oldState = state_;
   if (state_ != ZigbeeCoordinatorState::CS_IDLE)
-    ESP_LOGV(TAG, "coordinator run starting (state %i:%i - data state %i:%i)", state_, state_tries_, data_state_,
+    ESP_LOGVV(TAG, "coordinator run starting (state %i:%i - data state %i:%i)", state_, state_tries_, data_state_,
              data_state_tries_);
   AsyncBoolResult cmdResult;
   bool found_current_inverter;
@@ -165,7 +168,7 @@ void ZigbeeCoordinator::run() {
         healthcheck_idle_counter_ = 0;
         set_state(ZigbeeCoordinatorState::CS_CHECK_1);
       } else if (pairing_inverter_ != nullptr) {
-        restart(true);
+        restart(ecu_id_, true);
       } else if (rebooting_inverter_ != nullptr) {
         set_state(ZigbeeCoordinatorState::CS_REBOOT_INVERTER);
       } else if (polling_inverter_ != nullptr) {
@@ -292,7 +295,7 @@ AsyncBoolResult ZigbeeCoordinator::zb_initialize() {
     strncat(initBaseCommand[4], ecu_id_, 2);
     strncat(initBaseCommand[4], ecu_id_ + 2, 2);
 
-    ESP_LOGD(TAG, "init send cmd %i", state_tries_);
+    ESP_LOGVV(TAG, "init send cmd %i", state_tries_);
 
     zb_send(initBaseCommand[state_tries_]);
   }
@@ -313,7 +316,7 @@ void ZigbeeCoordinator::zb_hardreset() {
   reset_pin_->digital_write(false);
   delay(50);
   reset_pin_->digital_write(true);
-  ESP_LOGD(TAG, "zb module hard reset");
+  ESP_LOGV(TAG, "zb module hard reset");
 }
 
 // **************************************************************************************
@@ -334,7 +337,7 @@ AsyncBoolResult ZigbeeCoordinator::zb_enter_normal_operation() {
     // strcat(comMand, noCmd);
 
     // add the CRC at the end of the command is done by sendZigbee
-    ESP_LOGD(TAG, "send normal ops initCmd = %s", noCmd);
+    ESP_LOGVV(TAG, "send normal ops initCmd = %s", noCmd);
     zb_send(noCmd);
   }
 
@@ -348,7 +351,7 @@ AsyncBoolResult ZigbeeCoordinator::zb_enter_normal_operation() {
   // do nothing with the returned value
   // if(readCounter == 0) Serial.println("no answer");
 
-  ESP_LOGD(TAG, "zb initializing ready, now check running");
+  ESP_LOGVV(TAG, "zb initializing ready, now check running");
   return AsyncBoolResult::AB_SUCCESS;
 }
 
@@ -366,7 +369,7 @@ AsyncBoolResult ZigbeeCoordinator::zb_check() {
 
     // Device State 09 started as zigbeecoordinator
 
-    ESP_LOGD(TAG, "check zb radio");
+    ESP_LOGV(TAG, "check zb radio");
     // if(log) Update_Log("zigbee", "checking zb module");
     // check the radio, send FE00670067
     //  when ok the returned string = FE0E670000FFFF + ECU_ID REVERSE + 00000709001
@@ -397,12 +400,12 @@ AsyncBoolResult ZigbeeCoordinator::zb_check() {
     tail = split(s_d, ecu_id_reverse_ + 4);
     // the tail should contain 0709
     if (strstr(tail, "0709")) {
-      ESP_LOGD(TAG, "check ok");
+      ESP_LOGVV(TAG, "check ok");
       return AsyncBoolResult::AB_SUCCESS;
     }
   }
 
-  ESP_LOGD(TAG, "check failed");
+  ESP_LOGVV(TAG, "check failed");
   return AsyncBoolResult::AB_FAIL;
 }
 
@@ -412,12 +415,10 @@ AsyncBoolResult ZigbeeCoordinator::zb_ping() {
     // Update_Log("zigbee", "check serial loopback");
     // these commands already have the length 00 and checksum 20 resp 26
     char pingCmd[5] = {"2101"};  // ping
-    ESP_LOGD(TAG, "send zb ping");
+    ESP_LOGVV(TAG, "send zb ping");
 
     zb_send(pingCmd);  // answer should be FE02 6101 79 07 1C
-    //    if ( waitSerial2Available() ) { readZigbee(); } else { readCounter = 0;} // when nothing available we don't
-    //    read DebugPrintln("inMessage = " + String(inMessage) + " rc = " + String(readCounter));
-  }
+}
   char received[254] = {0};
   char s_d[CC2530_MAX_MSG_SIZE * 2] = {0};
   int bytes_read = 0;
@@ -425,10 +426,10 @@ AsyncBoolResult ZigbeeCoordinator::zb_ping() {
     return AsyncBoolResult::AB_INCOMPLETE;
 
   if (strstr(s_d, "FE026101") == NULL) {
-    ESP_LOGD(TAG, "ping failed");
+    ESP_LOGVV(TAG, "pinging zigbee coordinator failed");
     return AsyncBoolResult::AB_FAIL;
   } else {
-    ESP_LOGD(TAG, "ping ok");
+    ESP_LOGVV(TAG, "ping ok");
     return AsyncBoolResult::AB_SUCCESS;
   }
 }
@@ -485,11 +486,11 @@ AsyncBoolResult ZigbeeCoordinator::zb_read(char buf[], int &bytes_read) {
     }
     // with swaps we get F8 sometimes, this removes it
     if (buf[0] == 'F' && buf[1] == '8') {
-      ESP_LOGD(TAG, "found F8");
+      ESP_LOGVV(TAG, "found F8");
       strcpy(buf, &buf[2]);
     }
 
-    ESP_LOGD(TAG, "  read zb %s  rc=%i", buf, bytes_read);
+    ESP_LOGVV(TAG, "  read zb %s  rc=%i", buf, bytes_read);
     data_state_ = DataReadState::DS_IDLE;
     data_state_tries_ = 0;
     return AsyncBoolResult::AB_SUCCESS;
@@ -527,7 +528,7 @@ void ZigbeeCoordinator::zb_send(char printString[]) {
 
   uart_->flush();  // wait till the full command was sent
 
-  ESP_LOGD(TAG, "  send zb FE%s", bufferSend);
+  ESP_LOGVV(TAG, "  send zb FE%s", bufferSend);
 
   // else if (diagNose == 2) ws.textAll("sendZB FE" + String(bufferSend));
 }
@@ -555,9 +556,7 @@ AsyncBoolResult ZigbeeCoordinator::zb_reboot_inverter(Inverter *inverter) {
     // String term = "the rebootCmd = " + String(rebootCmd);
     // should be 2401 3A10 1414060001000F13 80971B01B3D7 FBFB06C1000000000000A6FEFE
 
-    ESP_LOGD(TAG, "the rebootCmd = %s", rebootCmd);
     //} else
-    // if(diagNose == 2) ws.textAll("the rebootCmd = " + String(rebootCmd));
 
     // should be 2401 103A 1414060001000F13 80 97 1B 01 A3 D6 FBFB06C1000000000000A6FEFE
     //           2401 A310 1414060001000F13 80 97 1B 01 A3 D6 FBFB06C1000000000000A6FEFE
@@ -603,7 +602,7 @@ bool ZigbeeCoordinator::start_pair_inverter(const char *serial) {
       ESP_LOGI(TAG, "pairing all unpaired inverters");
     else
       ESP_LOGI(TAG, "pairing inverter %s", pairing_inverter_->get_serial());
-    restart(true);
+    restart(ecu_id_, true);
     return true;
   }
   return false;
@@ -645,7 +644,7 @@ AsyncBoolResult ZigbeeCoordinator::zb_pair(Inverter *inverter) {
         snprintf(pairCmd, sizeof(pairCmd), "24020FFFFFFFFFFFFFFFFF14FFFF14010103000F0600%s", ecu_id_reverse_);
     }
     // send
-    ESP_LOGD(TAG, "pair command %i = %s", state_tries_, pairCmd);
+    ESP_LOGVV(TAG, "pair command %i = %s", state_tries_, pairCmd);
     // else if(diagNose == 2) ws.textAll(term);
 
     zb_send(pairCmd);
@@ -665,7 +664,7 @@ AsyncBoolResult ZigbeeCoordinator::zb_pair(Inverter *inverter) {
   if (state_tries_ == 3) {
     // now all 4 commands have been sent
     if (success) {
-      ESP_LOGI(TAG, "pairing successfully; inverter got id: %s", inverter->get_id());
+      ESP_LOGI(TAG, "pairing successfull! inverter %s has pair id %s", inverter->get_serial(), inverter->get_id());
       return AsyncBoolResult::AB_SUCCESS;
     } else {
       inverter->set_id("");
@@ -683,38 +682,38 @@ bool ZigbeeCoordinator::zb_check_pair_response(const char *msg, int bytes_read, 
   char temp[13];
 
   // Serial.println("messageToDecode = " + String(messageToDecode));
-  ESP_LOGD(TAG, "decoding: %s", msg);
+  ESP_LOGVV(TAG, "decoding: %s", msg);
   if (bytes_read == 0 || strlen(msg) < 6)  // invalid message
   {
-    ESP_LOGD(TAG, "no usable code, returning..");
+    ESP_LOGV(TAG, "no usable code, returning..");
     return false;
   }
   // can we conclude that a valid pair answer cannot be less than 60 bytes
   if (bytes_read > 111 || bytes_read < 60) {
     // term = "no pairing code, returning...";
-    ESP_LOGD(TAG, "no valid pairing code, returning...");
+    ESP_LOGV(TAG, "no valid pairing code, returning...");
     return false;
   }
 
   if (!strstr(msg, inverter->get_serial())) {
-    ESP_LOGD(TAG, "not found serialnr, returning");
+    ESP_LOGV(TAG, "not found serialnr, returning");
     return false;
   }
 
   result = split(msg, inverter->get_serial());
-  ESP_LOGD(TAG, "result after 1st splitting: %s", result);
+  ESP_LOGV(TAG, "result after 1st splitting: %s", result);
 
   // now we keep splitting as long as result contains the serial nr
   while (strstr(result, inverter->get_serial())) {
     result = split(result, inverter->get_serial());
   }
-  ESP_LOGD(TAG, "result after splitting: %s", result);
+  ESP_LOGV(TAG, "result after splitting: %s", result);
   // result are the bytes behind the serialnr
   // now we know that it is what we expect, a string right behind the last occurence of the serialnr
   result[4] = '\0';
   inverter->set_id(result);
 
-  ESP_LOGD(TAG, "found invID = %s", inverter->get_id());
+  ESP_LOGV(TAG, "found pair id %s", inverter->get_id());
 
   return true;
 }
@@ -757,14 +756,14 @@ bool ZigbeeCoordinator::start_poll_inverter(const char *serial) {
 
   if (polling_inverter_ == nullptr) {
     if (serial[0] == '*')
-      ESP_LOGI(TAG, "polling skipped: no inverters are paired");
+      ESP_LOGV(TAG, "polling skipped: no inverters are paired");
     else
       ESP_LOGE(TAG, "polling failed: inverter with serial %s is not paired", serial);
   } else if (state_ != ZigbeeCoordinatorState::CS_IDLE) {
-    ESP_LOGI(TAG, "polling defered: coordinator busy or not configured", serial);
+    ESP_LOGV(TAG, "polling defered: coordinator busy or not configured", serial);
   } else {
-    if (pair_all_mode_)
-      ESP_LOGI(TAG, "polling all paired inverters");
+    if (poll_all_mode_)
+      ESP_LOGV(TAG, "polling all paired inverters");
     else
       ESP_LOGI(TAG, "polling inverter %s", polling_inverter_->get_serial());
     set_state(ZigbeeCoordinatorState::CS_POLL_INVERTER);
@@ -804,50 +803,42 @@ float extractValue(uint8_t startPosition, uint8_t valueLength, float valueSlope,
 // ******************************************************************
 //                    decode polling answer
 // ******************************************************************
-int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, Inverter *inv) {
+bool ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, Inverter *inv) {
   uint8_t message_start_offset = 0;
 
   InverterData old_data = inv->get_data();
   InverterData new_data{};
 
   if (bytes_read == 0) {
-    ESP_LOGD(TAG, "no answer on poll request");
+    ESP_LOGE(TAG, "no answer to poll request for inverter %s", inv->get_serial());
 
-    return 50;  // no answer
+    return false;  // no answer
   }
 
-  ESP_LOGD(TAG, "decode poll response for inverter %s", inv->get_serial());
+  ESP_LOGV(TAG, "decode poll response for inverter %s", inv->get_serial());
 
   char *tail;
-  int fault = 0;
 
   if (strstr(msg, "FE01640100") == NULL) {  // answer to AF_DATA_REQUEST 00=success
-    ESP_LOGD(TAG, "AF_DATA_REQUEST failed");
-    fault = 10;
+    ESP_LOGE(TAG, "AF_DATA_REQUEST failed while polling inverter %s", inv->get_serial());
+    return false;
   } else if (strstr(msg, "FE03448000") == NULL) {  //  AF_DATA_CONFIRM the 00 byte = success
-    ESP_LOGD(TAG, "no AF_DATA_CONFIRM");
-    fault = 11;
+    ESP_LOGD(TAG, "did not receive AF_DATA_CONFIRM while polling inverter %s", inv->get_serial());
+    return false;
   } else if (strstr(msg, "4481") == NULL) {
-    ESP_LOGD(TAG, "no AF_INCOMING_MSG");
-    fault = 13;
-  } else if (strstr(msg, "FE0345C4") == NULL) {  //  ZDO_SRC_RTG_IND
-    // ESP_LOGD(TAG, "no route receipt");
-    // return 12; // this command seems facultative
+    ESP_LOGD(TAG, "did not receive AF_INCOMING_MSG while polling inverter %s", inv->get_serial());
+    return false;
   }
-  if (fault > 9) {
-    return fault;
-  }
+  
 
   if (strlen(msg) < 223)  // this message is not long enough to be valid inverter data
   {
-    ESP_LOGD(TAG, "ignoring, received %s", msg);
-    return 15;
+    ESP_LOGD(TAG, "received message was too short while polling inverter %s", inv->get_serial());
+    return false;
   }
-  // shorten the message by removing everything before 4481
 
+  // shorten the message by removing everything before 4481
   tail = split(msg, "44810000");  // remove the 0000 as well
-  // tail = after removing the 1st part
-  //  in tail at offset 14, 2 bytes with signalQuality reside
 
   new_data.signal_quality = extractValue(14, 2, 1, 0, tail) * 100 / 255;
 
@@ -855,7 +846,8 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
   strncpy(s_d, tail + 30, strlen(tail));
 
   if (inv->get_type() == InverterType::INVERTER_TYPE_DS3) {
-    ESP_LOGD(TAG, "decoding DS3 inverter");
+    ESP_LOGV(TAG, "decoding DS3 inverter");
+
     // ACV offset 34
     new_data.ac_voltage = extractValue(68, 4, 1, 0, s_d) / 3.8;
 
@@ -876,13 +868,14 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
     // current ch2 offset 34
     new_data.dc_current[1] = extractValue(64, 4, 1, 0, s_d) * 0.0125f;
 
+
   } else {
     if (inv->get_type() == InverterType::INVERTER_TYPE_YC600) {
-      ESP_LOGD(TAG, "decoding YC600 inverter");
+      ESP_LOGV(TAG, "decoding YC600 inverter");
     } else if (inv->get_type() == InverterType::INVERTER_TYPE_QS1) {
-      ESP_LOGD(TAG, "decoding QS1 inverter");
+      ESP_LOGV(TAG, "decoding QS1 inverter");
     } else {
-      ESP_LOGD(TAG, "decoding unspecified inverter (trying like QS1)");
+      ESP_LOGV(TAG, "decoding unspecified inverter (trying like QS1)");
     }
 
     // yc600 or QS1
@@ -910,7 +903,7 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
     //                                     QS1
     //********************************************************************************************
     if (inv->get_type() == InverterType::INVERTER_TYPE_QS1) {
-      ESP_LOGD(TAG, "extracting dc values for panels 3 and 4");
+      ESP_LOGV(TAG, "extracting dc values for panels 3 and 4");
 
       // ******************  dc voltage   *****************************************
       // voltage ch3 offset 21
@@ -935,7 +928,7 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
   // **********************************************************************
   //               calculation of the power per panel
   // **********************************************************************
-  ESP_LOGD(TAG, "polled inverter %s", inv->get_serial());
+  ESP_LOGI(TAG, "successfully polled inverter %s", inv->get_serial());
 
   // 1st the time period
   // at the start of this we have a value of the t_new[which] of the former poll
@@ -975,7 +968,7 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
   for (int x = 0; x < 4; x++) {
     if (inv->is_panel_connected(x)) {  // is this panel connected ? otherwise skip
 
-      ESP_LOGD(TAG, "decoding panel %i", x);
+      ESP_LOGV(TAG, "decoding panel %i", x);
 
       // now we extract a new energy_new[which][x]
       int extracted_energy_value =
@@ -1009,30 +1002,30 @@ int ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read, 
 
   inv->set_data(new_data);
 
-  ESP_LOGD(TAG, "done parsing poll response");
+  ESP_LOGV(TAG, "done parsing poll response");
   yield();
-  ESP_LOGI(TAG, "inverter data: %s", inv->get_serial());
-  ESP_LOGI(TAG, "                   time = %i", new_data.poll_timestamp);
-  ESP_LOGI(TAG, "               timespan = %i", time_since_last_poll);
-  ESP_LOGI(TAG, "            temperature = %.2f", new_data.temperature);
-  ESP_LOGI(TAG, "         signal_quality = %.2f", new_data.signal_quality);
-  ESP_LOGI(TAG, "             ac_voltage = %.2f", new_data.ac_voltage);
-  ESP_LOGI(TAG, "              frequency = %.2f", new_data.ac_frequency);
-  ESP_LOGI(TAG, "             dc_voltage = %5.2f %5.2f %5.2f %5.2f", new_data.dc_voltage[0], new_data.dc_voltage[1],
+  ESP_LOGV(TAG, "inverter data: %s", inv->get_serial());
+  ESP_LOGV(TAG, "                   time = %i", new_data.poll_timestamp);
+  ESP_LOGV(TAG, "               timespan = %i", time_since_last_poll);
+  ESP_LOGV(TAG, "            temperature = %.2f", new_data.temperature);
+  ESP_LOGV(TAG, "         signal_quality = %.2f", new_data.signal_quality);
+  ESP_LOGV(TAG, "             ac_voltage = %.2f", new_data.ac_voltage);
+  ESP_LOGV(TAG, "              frequency = %.2f", new_data.ac_frequency);
+  ESP_LOGV(TAG, "             dc_voltage = %5.2f %5.2f %5.2f %5.2f", new_data.dc_voltage[0], new_data.dc_voltage[1],
            new_data.dc_voltage[2], new_data.dc_voltage[3]);
-  ESP_LOGI(TAG, "             dc_current = %5.2f %5.2f %5.2f %5.2f", new_data.dc_current[0], new_data.dc_current[1],
+  ESP_LOGV(TAG, "             dc_current = %5.2f %5.2f %5.2f %5.2f", new_data.dc_current[0], new_data.dc_current[1],
            new_data.dc_current[2], new_data.dc_current[3]);
-  ESP_LOGI(TAG, "               dc_power = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.dc_power[0],
+  ESP_LOGV(TAG, "               dc_power = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.dc_power[0],
            new_data.dc_power[1], new_data.dc_power[2], new_data.dc_power[3], new_data.dc_power[4]);
-  ESP_LOGI(TAG, "energy_since_last_reset = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.energy_since_last_reset[0],
+  ESP_LOGV(TAG, "energy_since_last_reset = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.energy_since_last_reset[0],
            new_data.energy_since_last_reset[1], new_data.energy_since_last_reset[2],
            new_data.energy_since_last_reset[3], new_data.energy_since_last_reset[4]);
-  ESP_LOGI(TAG, "                  power = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.ac_power[0], new_data.ac_power[1],
+  ESP_LOGV(TAG, "                  power = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.ac_power[0], new_data.ac_power[1],
            new_data.ac_power[2], new_data.ac_power[3], new_data.ac_power[4]);
-  ESP_LOGI(TAG, "           energy_today = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.energy_today[0],
+  ESP_LOGV(TAG, "           energy_today = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.energy_today[0],
            new_data.energy_today[1], new_data.energy_today[2], new_data.energy_today[3], new_data.energy_today[4]);
 
-  return 0;
+  return true;
 }
 }  // namespace apsystems
 }  // namespace esphome

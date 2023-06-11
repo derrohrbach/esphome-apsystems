@@ -1,3 +1,4 @@
+import re
 from esphome import pins
 import esphome.codegen as cg
 import esphome.config_validation as cv
@@ -11,6 +12,7 @@ DEPENDENCIES = ["uart", "time"]
 
 CONF_AUTO_PAIR = "auto_pair"
 CONF_COORDINATOR_RESET_PIN = "coordinator_reset_pin"
+CONF_COORDINATOR_ID = "coordinator_id"
 CONF_SERIAL = "serial"
 
 apsystems_ns = cg.esphome_ns.namespace("apsystems")
@@ -28,6 +30,15 @@ ApsystemsRebootInverterAction = apsystems_ns.class_(
 
 MULTI_CONF = True
 
+
+def coordinator_id(value):
+    value = cv.string(value)
+    match = re.match(r"^[0-F]{12}$", value)
+    if match is None:
+        raise cv.Invalid(f"{value} is not a valid coordinator id")
+    return value
+
+
 CONFIG_SCHEMA = (
     cv.Schema(
         {
@@ -35,6 +46,7 @@ CONFIG_SCHEMA = (
             cv.GenerateID(CONF_TIME_ID): cv.use_id(time.RealTimeClock),
             cv.Optional(CONF_RESTORE, False): cv.boolean,
             cv.Optional(CONF_AUTO_PAIR, True): cv.boolean,
+            cv.Optional(CONF_COORDINATOR_ID, "46AF3B742134"): coordinator_id,
             cv.Required(CONF_COORDINATOR_RESET_PIN): pins.gpio_output_pin_schema,
         }
     )
@@ -49,6 +61,7 @@ async def to_code(config):
     await uart.register_uart_device(var, config)
     cg.add(var.set_restore(config[CONF_RESTORE]))
     cg.add(var.set_auto_pair(config[CONF_AUTO_PAIR]))
+    cg.add(var.set_ecu_id(config[CONF_COORDINATOR_ID]))
 
     reset_pin = await cg.gpio_pin_expression(config[CONF_COORDINATOR_RESET_PIN])
     cg.add(var.set_reset_pin(reset_pin))

@@ -32,7 +32,7 @@ class ZigbeeCoordinator {
   void add_inverter(Inverter *inverter);
   void set_reset_pin(GPIOPin *pin);
   void set_uart_device(uart::UARTDevice *uart);
-  void restart(bool hard);
+  void restart(std::string ecu_id, bool hard);
   void run();
   bool start_pair_inverter(const char *serial);
   bool start_poll_inverter(const char *serial);
@@ -44,7 +44,7 @@ class ZigbeeCoordinator {
   AsyncBoolResult zb_check();
   AsyncBoolResult zb_ping();
   AsyncBoolResult zb_poll(Inverter *inverter);
-  int zb_decode_poll_response(const char * msg, int bytes_read, Inverter *inverter);
+  bool zb_decode_poll_response(const char * msg, int bytes_read, Inverter *inverter);
   AsyncBoolResult zb_pair(Inverter *inverter);
   bool zb_check_pair_response(const char * msg, int bytes_read, Inverter *inverter);
   AsyncBoolResult zb_initialize();
@@ -65,7 +65,7 @@ class ZigbeeCoordinator {
   int state_tries_ = 0;
   int data_state_tries_ = 0;
   int delay_to_next_execution_ = 0;
-  char ecu_id_[13] = "D8A3011B9780";
+  char ecu_id_[13] = "\0";//"D8A3011B9780";
   char ecu_id_reverse_[13];
   std::vector<Inverter *> inverters_{};
   GPIOPin *reset_pin_;
