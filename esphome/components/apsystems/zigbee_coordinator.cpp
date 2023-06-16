@@ -98,12 +98,12 @@ void ZigbeeCoordinator::set_state(ZigbeeCoordinatorState state) {
 }
 
 void ZigbeeCoordinator::run() {
-  if(ecu_id_[0] == '\0') //Not initialized yet
+  if (ecu_id_[0] == '\0')  //Not initialized yet
     return;
   ZigbeeCoordinatorState oldState = state_;
   if (state_ != ZigbeeCoordinatorState::CS_IDLE)
     ESP_LOGVV(TAG, "coordinator run starting (state %i:%i - data state %i:%i)", state_, state_tries_, data_state_,
-             data_state_tries_);
+              data_state_tries_);
   AsyncBoolResult cmdResult;
   bool found_current_inverter;
   switch (state_) {
@@ -418,7 +418,7 @@ AsyncBoolResult ZigbeeCoordinator::zb_ping() {
     ESP_LOGVV(TAG, "send zb ping");
 
     zb_send(pingCmd);  // answer should be FE02 6101 79 07 1C
-}
+  }
   char received[254] = {0};
   char s_d[CC2530_MAX_MSG_SIZE * 2] = {0};
   int bytes_read = 0;
@@ -785,8 +785,27 @@ AsyncBoolResult ZigbeeCoordinator::zb_poll(Inverter *inverter) {
   if (!zb_read(s_d, bytesRead))
     return AsyncBoolResult::AB_INCOMPLETE;
 
-  if (zb_decode_poll_response(s_d, bytesRead, inverter))
+  if (zb_decode_poll_response(s_d, bytesRead, inverter)) {
+    inverter->set_unsuccessfull_polls(0);
     return AsyncBoolResult::AB_SUCCESS;
+  }
+  inverter->set_unsuccessfull_polls(inverter->get_unsuccessfull_polls() + 1);
+  if (inverter->get_unsuccessfull_polls() == 10) {
+    auto data = inverter->get_data();
+    data.ac_frequency = NAN;
+    for (int i = 0; i < 4; i++) {
+      data.dc_current[i] = NAN;
+      data.dc_voltage[i] = NAN;
+    }
+    data.ac_voltage = NAN;
+    data.signal_quality = NAN;
+    data.temperature = NAN;
+    for (int i = 0; i < 5; i++) {
+      data.ac_power[i] = NAN;
+      data.dc_power[i] = NAN;
+    }
+    inverter->set_data(data);
+  }
   return AsyncBoolResult::AB_FAIL;
 }
 
@@ -829,7 +848,6 @@ bool ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read,
     ESP_LOGD(TAG, "did not receive AF_INCOMING_MSG while polling inverter %s", inv->get_serial());
     return false;
   }
-  
 
   if (strlen(msg) < 223)  // this message is not long enough to be valid inverter data
   {
@@ -867,7 +885,6 @@ bool ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read,
     new_data.dc_current[0] = extractValue(60, 4, 1, 0, s_d) * 0.0125f;
     // current ch2 offset 34
     new_data.dc_current[1] = extractValue(64, 4, 1, 0, s_d) * 0.0125f;
-
 
   } else {
     if (inv->get_type() == InverterType::INVERTER_TYPE_YC600) {
@@ -934,13 +951,13 @@ bool ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read,
   // at the start of this we have a value of the t_new[which] of the former poll
   // if this is 0 there was no former poll
   switch (inv->get_type()) {
-    case InverterType::INVERTER_TYPE_YC600:                                 // yc600
+    case InverterType::INVERTER_TYPE_YC600:                      // yc600
       new_data.poll_timestamp = extractValue(34, 4, 1, 0, s_d);  // dataframe timestamp
       break;
-    case InverterType::INVERTER_TYPE_QS1:                                   // qs1
+    case InverterType::INVERTER_TYPE_QS1:                        // qs1
       new_data.poll_timestamp = extractValue(60, 4, 1, 0, s_d);  // dataframe timestamp
       break;
-    case InverterType::INVERTER_TYPE_DS3:                                   // ds3 offset 38
+    case InverterType::INVERTER_TYPE_DS3:                        // ds3 offset 38
       new_data.poll_timestamp = extractValue(76, 4, 1, 0, s_d);  // dataframe timestamp ds3
       break;
   }
@@ -1020,8 +1037,8 @@ bool ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read,
   ESP_LOGV(TAG, "energy_since_last_reset = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.energy_since_last_reset[0],
            new_data.energy_since_last_reset[1], new_data.energy_since_last_reset[2],
            new_data.energy_since_last_reset[3], new_data.energy_since_last_reset[4]);
-  ESP_LOGV(TAG, "                  power = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.ac_power[0], new_data.ac_power[1],
-           new_data.ac_power[2], new_data.ac_power[3], new_data.ac_power[4]);
+  ESP_LOGV(TAG, "                  power = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.ac_power[0],
+           new_data.ac_power[1], new_data.ac_power[2], new_data.ac_power[3], new_data.ac_power[4]);
   ESP_LOGV(TAG, "           energy_today = %8.2f +%8.2f +%8.2f +%8.2f =%9.2f", new_data.energy_today[0],
            new_data.energy_today[1], new_data.energy_today[2], new_data.energy_today[3], new_data.energy_today[4]);
 

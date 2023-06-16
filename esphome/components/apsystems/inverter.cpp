@@ -26,77 +26,54 @@ const char *Inverter::get_serial() { return serial_; }
 
 const char *Inverter::get_id() { return id_; }
 
-void Inverter::set_panel_energy_sensor(int i, sensor::Sensor *inst) {
-  panel_sensors_[i].energy = inst;
-}
-void Inverter::set_panel_ac_power_sensor(int i, sensor::Sensor *inst) {
-  panel_sensors_[i].ac_power = inst;
-}
-void Inverter::set_panel_dc_power_sensor(int i, sensor::Sensor *inst) {
-  panel_sensors_[i].dc_power = inst;
-}
-void Inverter::set_panel_dc_voltage_sensor(int i, sensor::Sensor *inst) {
-  panel_sensors_[i].dc_voltage = inst;
-}
-void Inverter::set_panel_dc_current_sensor(int i, sensor::Sensor *inst) {
-  panel_sensors_[i].dc_current = inst;
-}
+int Inverter::get_unsuccessfull_polls() { return unsuccessfull_polls_; }
+void Inverter::set_unsuccessfull_polls(int amount) { unsuccessfull_polls_ = amount; }
 
-void Inverter::set_energy_sensor(sensor::Sensor *inst) {
-  energy_sensor_ = inst;
-}
-void Inverter::set_temperature_sensor(sensor::Sensor *inst) {
-  temperature_sensor_ = inst;
-}
-void Inverter::set_ac_voltage_sensor(sensor::Sensor *inst) {
-  ac_voltage_sensor_ = inst;
-}
-void Inverter::set_ac_frequency_sensor(sensor::Sensor *inst) {
-  ac_frequency_sensor_ = inst;
-}
-void Inverter::set_signal_quality_sensor(sensor::Sensor *inst) {
-  signal_quality_sensor_ = inst;
-}
-void Inverter::set_dc_power_sensor(sensor::Sensor *inst) {
-  dc_power_sensor_ = inst;
-}
-void Inverter::set_ac_power_sensor(sensor::Sensor *inst) {
-  ac_power_sensor_ = inst;
-}
+void Inverter::set_panel_energy_sensor(int i, sensor::Sensor *inst) { panel_sensors_[i].energy = inst; }
+void Inverter::set_panel_ac_power_sensor(int i, sensor::Sensor *inst) { panel_sensors_[i].ac_power = inst; }
+void Inverter::set_panel_dc_power_sensor(int i, sensor::Sensor *inst) { panel_sensors_[i].dc_power = inst; }
+void Inverter::set_panel_dc_voltage_sensor(int i, sensor::Sensor *inst) { panel_sensors_[i].dc_voltage = inst; }
+void Inverter::set_panel_dc_current_sensor(int i, sensor::Sensor *inst) { panel_sensors_[i].dc_current = inst; }
+
+void Inverter::set_energy_sensor(sensor::Sensor *inst) { energy_sensor_ = inst; }
+void Inverter::set_temperature_sensor(sensor::Sensor *inst) { temperature_sensor_ = inst; }
+void Inverter::set_ac_voltage_sensor(sensor::Sensor *inst) { ac_voltage_sensor_ = inst; }
+void Inverter::set_ac_frequency_sensor(sensor::Sensor *inst) { ac_frequency_sensor_ = inst; }
+void Inverter::set_signal_quality_sensor(sensor::Sensor *inst) { signal_quality_sensor_ = inst; }
+void Inverter::set_dc_power_sensor(sensor::Sensor *inst) { dc_power_sensor_ = inst; }
+void Inverter::set_ac_power_sensor(sensor::Sensor *inst) { ac_power_sensor_ = inst; }
 
 InverterData Inverter::get_data() { return data_; }
+
+void publish_state(sensor::Sensor *sensor, float state, bool nanIs0) {
+  if (sensor == nullptr)
+    return;
+  if (std::isnan(state) && nanIs0) {
+    sensor->publish_state(0);
+  } else {
+    sensor->publish_state(state);
+  }
+}
 
 void Inverter::set_data(InverterData data) {
   data_ = data;
   save_preferences();
   for (int i = 0; i < 4; i++) {
     if (is_panel_connected(i)) {
-      if (panel_sensors_[i].energy != nullptr)
-        panel_sensors_[i].energy->publish_state(data_.energy_today[i]);
-      if (panel_sensors_[i].ac_power != nullptr)
-        panel_sensors_[i].ac_power->publish_state(data_.ac_power[i]);
-      if (panel_sensors_[i].dc_power != nullptr)
-        panel_sensors_[i].dc_power->publish_state(data_.dc_power[i]);
-      if (panel_sensors_[i].dc_voltage != nullptr)
-        panel_sensors_[i].dc_voltage->publish_state(data_.dc_voltage[i]);
-      if (panel_sensors_[i].dc_current != nullptr)
-        panel_sensors_[i].dc_current->publish_state(data_.dc_current[i]);
+      publish_state(panel_sensors_[i].energy, data_.energy_today[i], false);
+      publish_state(panel_sensors_[i].ac_power, data_.ac_power[i], true);
+      publish_state(panel_sensors_[i].dc_power, data_.dc_power[i], true);
+      publish_state(panel_sensors_[i].dc_voltage, data_.dc_voltage[i], false);
+      publish_state(panel_sensors_[i].dc_current, data_.dc_current[i], false);
     }
   }
-  if (energy_sensor_ != nullptr)
-    energy_sensor_->publish_state(data_.energy_today[4]);
-  if (temperature_sensor_ != nullptr)
-    temperature_sensor_->publish_state(data_.temperature);
-  if (ac_voltage_sensor_ != nullptr)
-    ac_voltage_sensor_->publish_state(data_.ac_voltage);
-  if (ac_frequency_sensor_ != nullptr)
-    ac_frequency_sensor_->publish_state(data_.ac_frequency);
-  if (signal_quality_sensor_ != nullptr)
-    signal_quality_sensor_->publish_state(data_.signal_quality);
-  if (dc_power_sensor_ != nullptr)
-    dc_power_sensor_->publish_state(data_.dc_power[4]);
-  if (ac_power_sensor_ != nullptr)
-    ac_power_sensor_->publish_state(data_.ac_power[4]);
+  publish_state(energy_sensor_, data_.energy_today[4], false);
+  publish_state(temperature_sensor_, data_.temperature, false);
+  publish_state(ac_voltage_sensor_, data_.ac_voltage, false);
+  publish_state(ac_frequency_sensor_, data_.ac_frequency, false);
+  publish_state(signal_quality_sensor_, data_.signal_quality, false);
+  publish_state(dc_power_sensor_, data_.dc_power[4], true);
+  publish_state(ac_power_sensor_, data_.ac_power[4], true);
 }
 
 void Inverter::save_preferences() {

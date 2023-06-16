@@ -63,6 +63,8 @@ class Inverter {
   void set_signal_quality_sensor(sensor::Sensor *inst);
   void set_dc_power_sensor(sensor::Sensor *inst);
   void set_ac_power_sensor(sensor::Sensor *inst);
+  int get_unsuccessfull_polls();
+  void set_unsuccessfull_polls(int amount);
   void save_preferences();
   void enable_restore();
   InverterData get_data();
@@ -71,8 +73,9 @@ class Inverter {
  protected:
   bool restore_;
   ESPPreferenceObject pref_;
+  int unsuccessfull_polls_ = 0;
   char serial_[13] = "000000000000";
-  char id_[5] = {0};
+  char id_[5] {0};
   InverterData data_{};
   InverterType type_ = InverterType::INVERTER_TYPE_YC600;
 
