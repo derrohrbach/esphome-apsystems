@@ -18,7 +18,7 @@ Additionally you need to flash a custom firmware to the zigbee coordinator. For 
 
 ```yaml
 external_components:
-  - source: github://derrohrbach/esphome_apsystems
+  - source: github://derrohrbach/esphome-apsystems
 
 time:
   - platform: homeassistant
