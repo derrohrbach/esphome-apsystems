@@ -115,5 +115,5 @@ This was only tested with the following setups. If you can get it running on oth
 
 - @derrohrbach
   - 1x YC600
-  - ESP32 
+  - ESP32 and ESP8266
   - cc2531 ZigBee Module flashed using ccloader
