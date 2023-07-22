@@ -88,6 +88,8 @@ void ZigbeeCoordinator::set_state(ZigbeeCoordinatorState state) {
     case ZigbeeCoordinatorState::CS_REBOOT_INVERTER:
       set_delay_to_next_execution(2000);  // Wait for reboot until we read the response
       break;
+    case ZigbeeCoordinatorState::CS_STOPPED:
+      break;
   }
   if (state == ZigbeeCoordinatorState::CS_IDLE)
     set_delay_to_next_execution(1000);
@@ -108,7 +110,7 @@ void ZigbeeCoordinator::run() {
   bool found_current_inverter;
   switch (state_) {
     case ZigbeeCoordinatorState::CS_CHECK_1:
-      if (cmdResult = zb_ping()) {
+      if ((cmdResult = zb_ping())) {
         if (cmdResult == AsyncBoolResult::AB_SUCCESS) {
           // Ping successfoll -> go to second check
           set_state(ZigbeeCoordinatorState::CS_CHECK_2);
@@ -122,7 +124,7 @@ void ZigbeeCoordinator::run() {
       }
       break;
     case ZigbeeCoordinatorState::CS_CHECK_2:
-      if (cmdResult = zb_check()) {
+      if ((cmdResult = zb_check())) {
         if (cmdResult == AsyncBoolResult::AB_SUCCESS) {
           // Ping successfull -> go to IDLE
           if (pairing_inverter_ != nullptr)
@@ -143,7 +145,7 @@ void ZigbeeCoordinator::run() {
       set_state(ZigbeeCoordinatorState::CS_INITIALIZE_COORDINATOR);
       break;
     case ZigbeeCoordinatorState::CS_INITIALIZE_COORDINATOR:
-      if (cmdResult = zb_initialize()) {
+      if ((cmdResult = zb_initialize())) {
         if (cmdResult == AsyncBoolResult::AB_SUCCESS) {
           if (pairing_inverter_ != nullptr)
             set_state(ZigbeeCoordinatorState::CS_CHECK_1);  // We are pairing, skip entering NO
@@ -154,7 +156,7 @@ void ZigbeeCoordinator::run() {
       }
       break;
     case ZigbeeCoordinatorState::CS_ENTER_NORMAL_OPERATION:
-      if (cmdResult = zb_enter_normal_operation()) {
+      if ((cmdResult = zb_enter_normal_operation())) {
         if (cmdResult == AsyncBoolResult::AB_SUCCESS)
           set_state(ZigbeeCoordinatorState::CS_CHECK_1);
         else
@@ -176,7 +178,7 @@ void ZigbeeCoordinator::run() {
       }
       break;
     case ZigbeeCoordinatorState::CS_PAIR_INVERTER:
-      if (cmdResult = zb_pair(pairing_inverter_)) {
+      if ((cmdResult = zb_pair(pairing_inverter_))) {
         auto paired_inverter = pairing_inverter_;
         pairing_inverter_ = nullptr;
         if (pair_all_mode_) {
@@ -203,7 +205,7 @@ void ZigbeeCoordinator::run() {
       }
       break;
     case ZigbeeCoordinatorState::CS_POLL_INVERTER:
-      if (cmdResult = zb_poll(polling_inverter_)) {
+      if ((cmdResult = zb_poll(polling_inverter_))) {
         auto polled_inverter = polling_inverter_;
         polling_inverter_ = nullptr;
         if (poll_all_mode_) {
@@ -228,10 +230,12 @@ void ZigbeeCoordinator::run() {
       }
       break;
     case ZigbeeCoordinatorState::CS_REBOOT_INVERTER:
-      if (cmdResult = zb_reboot_inverter(rebooting_inverter_)) {
+      if ((cmdResult = zb_reboot_inverter(rebooting_inverter_))) {
         rebooting_inverter_ = nullptr;
         set_state(ZigbeeCoordinatorState::CS_IDLE);
       }
+      break;
+    case ZigbeeCoordinatorState::CS_STOPPED:
       break;
   }
   if (data_state_ == DataReadState::DS_IDLE && oldState == state_) {
@@ -287,7 +291,7 @@ AsyncBoolResult ZigbeeCoordinator::zb_initialize() {
     // construct some of the commands
     // ***************************** command 2 ********************************************
     // command 2 this is 26050108FFFF we add ecu_id reversed
-    strncat(initBaseCommand[2], ecu_id_reverse_, sizeof(ecu_id_reverse_));
+    strncat(initBaseCommand[2], ecu_id_reverse_, 12);
     // DebugPrintln("initBaseCmd 2 constructed = " + String(initBaseCommand[2]));  // ok
 
     // ***************************** command 4 ********************************************
@@ -324,7 +328,7 @@ void ZigbeeCoordinator::zb_hardreset() {
 // **************************************************************************************
 AsyncBoolResult ZigbeeCoordinator::zb_enter_normal_operation() {
   if (data_state_ == DataReadState::DS_IDLE) {
-    char noCmd[49] = {0};  //  this buffer must have the right length
+    char noCmd[100] = {0};  //  this buffer must have the right length
 
     snprintf(noCmd, sizeof(noCmd), "2401FFFF1414060001000F1E%sFBFB1100000D6030FBD3000000000000000004010281FEFE",
              ecu_id_reverse_);
@@ -540,7 +544,7 @@ AsyncBoolResult ZigbeeCoordinator::zb_reboot_inverter(Inverter *inverter) {
   if (data_state_ == DataReadState::DS_IDLE && state_tries_ == 0) {
     char rebootCmd[57];
 
-    char command[][50] = {
+    char command[][30] = {
         "2401",
         "1414060001000F13",
         "FBFB06C1000000000000A6FEFE",
@@ -548,11 +552,11 @@ AsyncBoolResult ZigbeeCoordinator::zb_reboot_inverter(Inverter *inverter) {
     // length = 46 + 4 + 12 + 1= 53
 
     // construct the command
-    strncpy(rebootCmd, command[0], sizeof(command[0]));
+    strncpy(rebootCmd, command[0], 4);
     strncat(rebootCmd, inverter->get_id(), 4);  // add inv_id
-    strncat(rebootCmd, command[1], sizeof(command[1]));
-    strncat(rebootCmd, ecu_id_reverse_, sizeof(ecu_id_reverse_));
-    strncat(rebootCmd, command[2], sizeof(command[2]));
+    strncat(rebootCmd, command[1], 16);
+    strncat(rebootCmd, ecu_id_reverse_, 12);
+    strncat(rebootCmd, command[2], 26);
     // String term = "the rebootCmd = " + String(rebootCmd);
     // should be 2401 3A10 1414060001000F13 80971B01B3D7 FBFB06C1000000000000A6FEFE
 
@@ -1027,11 +1031,10 @@ bool ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read,
           new_data_valid = false;
         }
       }
-      if (new_data.dc_power[x] < 0 || new_data.ac_power[x] < 0 
-        || new_data.dc_current[x] < 0 || new_data.dc_voltage[x] < 0 
-        || new_data.ac_frequency < 30 || new_data.ac_frequency > 80 
-        || new_data.ac_voltage < 80 || new_data.ac_voltage > 290
-        || new_data.signal_quality < 0 || new_data.signal_quality > 100) {
+      if (new_data.dc_power[x] < 0 || new_data.ac_power[x] < 0 || new_data.dc_current[x] < 0 ||
+          new_data.dc_voltage[x] < 0 || new_data.ac_frequency < 30 || new_data.ac_frequency > 80 ||
+          new_data.ac_voltage < 80 || new_data.ac_voltage > 290 || new_data.signal_quality < 0 ||
+          new_data.signal_quality > 100) {
         new_data_valid = false;
       }
 
