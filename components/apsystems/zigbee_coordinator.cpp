@@ -98,7 +98,7 @@ void ZigbeeCoordinator::set_state(ZigbeeCoordinatorState state) {
 }
 
 void ZigbeeCoordinator::run() {
-  if (ecu_id_[0] == '\0')  //Not initialized yet
+  if (ecu_id_[0] == '\0')  // Not initialized yet
     return;
   ZigbeeCoordinatorState oldState = state_;
   if (state_ != ZigbeeCoordinatorState::CS_IDLE)
@@ -827,6 +827,7 @@ bool ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read,
 
   InverterData old_data = inv->get_data();
   InverterData new_data{};
+  bool new_data_valid = true;
 
   if (bytes_read == 0) {
     ESP_LOGE(TAG, "no answer to poll request for inverter %s", inv->get_serial());
@@ -1010,6 +1011,30 @@ bool ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read,
       new_data.dc_power[x] = new_data.dc_voltage[x] * new_data.dc_current[x];
       new_data.ac_power[x] = energy_increase / (time_since_last_poll / 3600.0f);  //[W]
 
+      // reject invalid value ranges
+      if (inv->get_type() == InverterType::INVERTER_TYPE_YC600) {
+        if (new_data.dc_power[x] > 450 || new_data.ac_power[x] > 450) {
+          new_data_valid = false;
+        }
+      }
+      if (inv->get_type() == InverterType::INVERTER_TYPE_QS1) {
+        if (new_data.dc_power[x] > 480 || new_data.ac_power[x] > 480) {
+          new_data_valid = false;
+        }
+      }
+      if (inv->get_type() == InverterType::INVERTER_TYPE_DS3) {
+        if (new_data.dc_power[x] > 750 || new_data.ac_power[x] > 750) {
+          new_data_valid = false;
+        }
+      }
+      if (new_data.dc_power[x] < 0 || new_data.ac_power[x] < 0 
+        || new_data.dc_current[x] < 0 || new_data.dc_voltage[x] < 0 
+        || new_data.ac_frequency < 30 || new_data.ac_frequency > 80 
+        || new_data.ac_voltage < 80 || new_data.ac_voltage > 290
+        || new_data.signal_quality < 0 || new_data.signal_quality > 100) {
+        new_data_valid = false;
+      }
+
       new_data.dc_power[4] += new_data.dc_power[x];
       new_data.ac_power[4] += new_data.ac_power[x];
       new_data.energy_since_last_reset[4] += new_data.energy_since_last_reset[x];
@@ -1017,9 +1042,13 @@ bool ZigbeeCoordinator::zb_decode_poll_response(const char *msg, int bytes_read,
     }
   }  // stack the increase
 
-  inv->set_data(new_data);
-
   ESP_LOGV(TAG, "done parsing poll response");
+  if (new_data_valid) {
+    inv->set_data(new_data);
+  } else {
+    ESP_LOGW(TAG, "ignoring invalid data from inverter!");
+  }
+
   yield();
   ESP_LOGV(TAG, "inverter data: %s", inv->get_serial());
   ESP_LOGV(TAG, "                   time = %i", new_data.poll_timestamp);
