@@ -48,7 +48,7 @@ template<typename... Ts> class ApsystemsPairInverterAction : public Action<Ts...
 
   TEMPLATABLE_VALUE(std::string, serial)
 
-  void play(Ts... x) override { this->apsystems_->pair_inverter(serial_.value(x...)); }
+  void play(const Ts &...x) override { this->apsystems_->pair_inverter(serial_.value(x...)); }
 
  protected:
   Apsystems *apsystems_;
@@ -60,7 +60,7 @@ template<typename... Ts> class ApsystemsPollInverterAction : public Action<Ts...
 
   TEMPLATABLE_VALUE(std::string, serial)
 
-  void play(Ts... x) override { this->apsystems_->poll_inverter(serial_.value(x...)); }
+  void play(const Ts &...x) override { this->apsystems_->poll_inverter(serial_.value(x...)); }
 
  protected:
   Apsystems *apsystems_;
@@ -73,7 +73,7 @@ template<typename... Ts> class ApsystemsRebootInverterAction : public Action<Ts.
 
   TEMPLATABLE_VALUE(std::string, serial)
 
-  void play(Ts... x) override { this->apsystems_->reboot_inverter(serial_.value(x...)); }
+  void play(const Ts &...x) override { this->apsystems_->reboot_inverter(serial_.value(x...)); }
 
  protected:
   Apsystems *apsystems_;
